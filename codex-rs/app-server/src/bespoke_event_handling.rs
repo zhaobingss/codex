@@ -22,7 +22,6 @@ use codex_app_server_protocol::CommandExecutionSource;
 use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::DeprecationNoticeNotification;
 use codex_app_server_protocol::DynamicToolCallParams;
-use codex_app_server_protocol::DynamicToolCallStatus;
 use codex_app_server_protocol::ErrorNotification;
 use codex_app_server_protocol::ExecPolicyAmendment as V2ExecPolicyAmendment;
 use codex_app_server_protocol::FileChangeApprovalDecision;
@@ -825,25 +824,6 @@ pub(crate) async fn apply_bespoke_event_handling(
             let namespace = request.namespace;
             let tool = request.tool;
             let arguments = request.arguments;
-            let item = ThreadItem::DynamicToolCall {
-                id: call_id.clone(),
-                namespace: namespace.clone(),
-                tool: tool.clone(),
-                arguments: arguments.clone(),
-                status: DynamicToolCallStatus::InProgress,
-                content_items: None,
-                success: None,
-                duration_ms: None,
-            };
-            let notification = ItemStartedNotification {
-                thread_id: conversation_id.to_string(),
-                turn_id: turn_id.clone(),
-                started_at_ms: request.started_at_ms,
-                item,
-            };
-            outgoing
-                .send_server_notification(ServerNotification::ItemStarted(notification))
-                .await;
             let params = DynamicToolCallParams {
                 thread_id: conversation_id.to_string(),
                 turn_id: turn_id.clone(),
@@ -863,7 +843,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             // Deprecated MCP tool-call events are still fanned out for legacy clients.
             // App-server v2 receives the canonical TurnItem::McpToolCall lifecycle instead.
         }
-        msg @ (EventMsg::DynamicToolCallResponse(_)
+        EventMsg::DynamicToolCallResponse(_)
         | EventMsg::CollabAgentSpawnBegin(_)
         | EventMsg::CollabAgentSpawnEnd(_)
         | EventMsg::CollabAgentInteractionBegin(_)
@@ -872,8 +852,8 @@ pub(crate) async fn apply_bespoke_event_handling(
         | EventMsg::CollabWaitingEnd(_)
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabResumeBegin(_)
-        | EventMsg::CollabResumeEnd(_)
-        | EventMsg::AgentMessageContentDelta(_)
+        | EventMsg::CollabResumeEnd(_) => {}
+        msg @ (EventMsg::AgentMessageContentDelta(_)
         | EventMsg::PlanDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
@@ -896,12 +876,6 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .remove_thread(&activity.agent_thread_id.to_string())
                     .await;
             }
-            let notification = item_event_to_server_notification(
-                EventMsg::SubAgentActivity(activity),
-                &conversation_id.to_string(),
-                &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
         }
         EventMsg::CollabCloseEnd(end_event) => {
             if thread_manager
@@ -913,12 +887,6 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .remove_thread(&end_event.receiver_thread_id.to_string())
                     .await;
             }
-            let notification = item_event_to_server_notification(
-                EventMsg::CollabCloseEnd(end_event),
-                &conversation_id.to_string(),
-                &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
         }
         EventMsg::ContextCompacted(..) => {
             // Core still fans out this deprecated event for legacy clients;
@@ -998,16 +966,20 @@ pub(crate) async fn apply_bespoke_event_handling(
         }
         EventMsg::ViewImageToolCall(_) => {}
         EventMsg::EnteredReviewMode(review_request) => {
+            let turn_id = review_request
+                .turn_id
+                .unwrap_or_else(|| event_turn_id.clone());
+            let item_id = review_request.item_id.unwrap_or_else(|| turn_id.clone());
             let review = review_request
                 .user_facing_hint
                 .unwrap_or_else(|| review_prompts::user_facing_hint(&review_request.target));
             let item = ThreadItem::EnteredReviewMode {
-                id: event_turn_id.clone(),
+                id: item_id,
                 review,
             };
             let started = ItemStartedNotification {
                 thread_id: conversation_id.to_string(),
-                turn_id: event_turn_id.clone(),
+                turn_id: turn_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 item: item.clone(),
             };
@@ -1016,7 +988,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
             let completed = ItemCompletedNotification {
                 thread_id: conversation_id.to_string(),
-                turn_id: event_turn_id.clone(),
+                turn_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 item,
             };
@@ -1056,17 +1028,21 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
         }
         EventMsg::ExitedReviewMode(review_event) => {
+            let turn_id = review_event
+                .turn_id
+                .unwrap_or_else(|| event_turn_id.clone());
+            let item_id = review_event.item_id.unwrap_or_else(|| turn_id.clone());
             let review = match review_event.review_output {
                 Some(output) => render_review_output_text(&output),
                 None => REVIEW_FALLBACK_MESSAGE.to_string(),
             };
             let item = ThreadItem::ExitedReviewMode {
-                id: event_turn_id.clone(),
+                id: item_id,
                 review,
             };
             let started = ItemStartedNotification {
                 thread_id: conversation_id.to_string(),
-                turn_id: event_turn_id.clone(),
+                turn_id: turn_id.clone(),
                 started_at_ms: now_unix_timestamp_ms(),
                 item: item.clone(),
             };
@@ -1075,7 +1051,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
             let completed = ItemCompletedNotification {
                 thread_id: conversation_id.to_string(),
-                turn_id: event_turn_id.clone(),
+                turn_id,
                 completed_at_ms: now_unix_timestamp_ms(),
                 item,
             };
@@ -1114,21 +1090,13 @@ pub(crate) async fn apply_bespoke_event_handling(
                 return;
             }
             let item_id = exec_command_begin_event.call_id.clone();
-            let first_start = {
+            {
                 let mut state = thread_state.lock().await;
                 state
                     .turn_summary
                     .command_execution_started
                     .insert(item_id.clone())
             };
-            if first_start {
-                let notification = item_event_to_server_notification(
-                    EventMsg::ExecCommandBegin(exec_command_begin_event),
-                    &conversation_id.to_string(),
-                    &event_turn_id,
-                );
-                outgoing.send_server_notification(notification).await;
-            }
         }
         EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event) => {
             let notification = item_event_to_server_notification(
@@ -1156,12 +1124,6 @@ pub(crate) async fn apply_bespoke_event_handling(
                 // emitted for unified exec interactions.
                 return;
             }
-            let notification = item_event_to_server_notification(
-                EventMsg::ExecCommandEnd(exec_command_end_event),
-                &conversation_id.to_string(),
-                &event_turn_id,
-            );
-            outgoing.send_server_notification(notification).await;
         }
         // If this is a TurnAborted, reply to any pending interrupt requests.
         EventMsg::TurnAborted(turn_aborted_event) => {

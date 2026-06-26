@@ -386,8 +386,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn raw_append_items_does_not_update_sqlite_metadata() {
-        // This pins the ThreadStore contract: raw appends are history-only. Callers that need
+    async fn direct_append_items_does_not_update_sqlite_metadata() {
+        // This pins the ThreadStore contract: direct appends are history-only. Callers that need
         // metadata updates must use LiveThread or call update_thread_metadata explicitly.
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
@@ -410,7 +410,7 @@ mod tests {
                 items: vec![user_message_item("raw append")],
             })
             .await
-            .expect("append raw item");
+            .expect("append canonical item");
         store.flush_thread(thread_id).await.expect("flush thread");
 
         assert_eq!(
@@ -643,6 +643,7 @@ mod tests {
             store,
             ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: false,
@@ -697,6 +698,7 @@ mod tests {
             store,
             ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: false,
@@ -826,6 +828,7 @@ mod tests {
         resumed_store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: None,
                 history: None,
                 include_archived: true,
@@ -886,6 +889,7 @@ mod tests {
         let err = store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: true,
@@ -908,6 +912,7 @@ mod tests {
         let err = store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: true,
@@ -937,6 +942,7 @@ mod tests {
         store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: true,
@@ -985,6 +991,7 @@ mod tests {
         store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path.clone()),
                 history: None,
                 include_archived: true,
@@ -1023,6 +1030,7 @@ mod tests {
         store
             .resume_thread(ResumeThreadParams {
                 thread_id,
+                history_mode: ThreadHistoryMode::Legacy,
                 rollout_path: Some(rollout_path),
                 history: None,
                 include_archived: true,
@@ -1194,6 +1202,7 @@ mod tests {
             store
                 .resume_thread(ResumeThreadParams {
                     thread_id,
+                    history_mode: ThreadHistoryMode::Paginated,
                     rollout_path: Some(rollout_path),
                     history: None,
                     include_archived: false,
