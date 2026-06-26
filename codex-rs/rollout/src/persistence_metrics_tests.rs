@@ -279,7 +279,7 @@ fn paginated_item_completion_is_persisted() {
     }));
 
     let (persisted, measurement) =
-        measure_and_filter_rollout_items(&[item.clone()], ThreadHistoryMode::Paginated);
+        measure_and_filter_rollout_items(std::slice::from_ref(&item), ThreadHistoryMode::Paginated);
 
     assert_eq!(
         serde_json::to_value(persisted).expect("serialize persisted items"),

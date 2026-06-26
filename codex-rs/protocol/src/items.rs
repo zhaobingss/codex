@@ -1098,7 +1098,6 @@ impl CollabAgentToolCallItem {
         let receiver_thread_id = self.receiver_thread_ids.first().copied();
         match self.tool {
             CollabAgentTool::SpawnAgent => {
-                let receiver_thread_id = receiver_thread_id;
                 let receiver_agent = receiver_thread_id.and_then(|id| self.receiver_agent(id));
                 Some(EventMsg::CollabAgentSpawnEnd(CollabAgentSpawnEndEvent {
                     call_id: self.id.clone(),
